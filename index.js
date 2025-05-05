@@ -2,6 +2,7 @@ const express = require("express");
 const admin = require("firebase-admin");
 const cors = require("cors");
 require("dotenv").config();
+const cron = require("node-cron");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -367,3 +368,279 @@ app.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
   shouldLog("info") && console.log(`CORS allowed origin: ${allowedOrigin}`);
 });
+
+const deListNotification = async () => {
+  try {
+    console.log("Scheduler triggered: Updating inventory ages");
+
+    // Reference the 'ACN123' collection
+    const collectionRef = db.collection("ACN123");
+
+    // Current Unix timestamp (in seconds)
+    const currentUnixTime = Math.floor(Date.now() / 1000);
+
+    // Set batch size limit to 500 (Firestore batch max size)
+    const batchSize = 500;
+
+    // Get documents in batches to handle large collections
+    let documentsProcessed = 0;
+    let lastDocument = null;
+
+    while (true) {
+      let query = collectionRef.orderBy("__name__").limit(batchSize);
+      if (lastDocument) {
+        query = query.startAfter(lastDocument);
+      }
+
+      const snapshot = await query.get();
+
+      if (snapshot.empty) {
+        console.log("All documents processed.");
+        break;
+      }
+
+      const batch = db.batch();
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const { dateOfInventoryAdded, dateOfStatusLastChecked, status } = data;
+
+        const updates = {};
+        if (dateOfInventoryAdded) {
+          updates.ageOfInventory = Math.floor(
+            (currentUnixTime - dateOfInventoryAdded) / (60 * 60 * 24)
+          );
+        }
+        if (dateOfStatusLastChecked) {
+          updates.ageOfStatus = Math.floor(
+            (currentUnixTime - dateOfStatusLastChecked) / (60 * 60 * 24)
+          );
+        }
+
+        if (updates.ageOfStatus === 12 && status === "Available") {
+          (async () => {
+            try {
+              const results = await sendNotificationToAgent(
+                updates.cpCode,
+                `${updates.nameOfTheProperty} delists in 3 days`,
+                `Your listing goes hidden in 3 days unless you update its status.`,
+                { additionalData: "optional-value" }
+              );
+              console.log("Notification results:", results);
+            } catch (error) {
+              console.error("Error executing campaign:", error);
+            }
+          })();
+        } else if (updates.ageOfStatus === 13 && status === "Available") {
+          (async () => {
+            try {
+              const results = await sendNotificationToAgent(
+                updates.cpCode,
+                `${updates.nameOfTheProperty} delists in 2 days`,
+                `Don’t lose visibility—update within 48 hours.`,
+                { additionalData: "optional-value" }
+              );
+              console.log("Notification results:", results);
+            } catch (error) {
+              console.error("Error executing campaign:", error);
+            }
+          })();
+        } else if (updates.ageOfStatus === 14 && status === "Available") {
+          (async () => {
+            try {
+              const results = await sendNotificationToAgent(
+                updates.cpCode,
+                `${updates.nameOfTheProperty} delists tomorrow`,
+                `Last chance! Update now or it vanishes from ACN.`,
+                { additionalData: "optional-value" }
+              );
+              console.log("Notification results:", results);
+            } catch (error) {
+              console.error("Error executing campaign:", error);
+            }
+          })();
+        } else if (updates.ageOfStatus === 15 && status === "Available") {
+          (async () => {
+            try {
+              const results = await sendNotificationToAgent(
+                updates.cpCode,
+                `Listing Hidden`,
+                `${updates.nameOfTheProperty} is now hidden due to no status update.`,
+                { additionalData: "optional-value" }
+              );
+              console.log("Notification results:", results);
+            } catch (error) {
+              console.error("Error executing campaign:", error);
+            }
+          })();
+        }
+      });
+    }
+  } catch {
+    return;
+  }
+};
+
+async function getMicromarketToCpIdMapping() {
+  try {
+    // Reference to the agents collection
+    const agentsRef = db.collection("agents");
+
+    // Query for agents with micromarket field
+    // Note: Firestore doesn't have a direct $exists operator like MongoDB
+    // We can query for non-null values though
+    const snapshot = await agentsRef
+      .where("preferedMicromarket", "!=", null)
+      .select("cpId", "preferedMicromarket")
+      .get();
+
+    // Create the mapping object
+    let micromarketToCpIdMap = {};
+
+    // Process the results to build our mapping
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      const cpId = data.cpId;
+      const micromarket = data.preferedMicromarket;
+
+      // Skip if any required field is missing
+      if (!cpId || !micromarket) return;
+
+      // If this is the first time we're seeing this micromarket, initialize the array
+      if (!micromarketToCpIdMap[micromarket]) {
+        micromarketToCpIdMap[micromarket] = [];
+      }
+
+      // Add this cpId to the micromarket's array
+      micromarketToCpIdMap[micromarket].push(cpId);
+    });
+
+    return micromarketToCpIdMap;
+  } catch (error) {
+    console.error("Error mapping micromarkets to cpIds:", error);
+    throw error;
+  }
+}
+
+async function getLast24HoursProperties() {
+  try {
+    // Calculate timestamp for 24 hours ago
+    const twentyFourHoursago = new Date();
+    twentyFourHoursago.setHours(twentyFourHoursago.getHours() - 24);
+    const twentyFourHoursAgo = Math.floor(twentyFourHoursago.getTime() / 1000);
+
+    // Reference to the properties collection in ACN123 database
+    const propertiesRef = db.collection("ACN123");
+
+    // Query for properties added in the last 24 hours
+    const snapshot = await propertiesRef
+      .where("dateOfInventoryAdded", ">=", twentyFourHoursAgo)
+      .get();
+
+    // Initialize result objects
+    const countByMicromarket = {}; // Just counts by micromarket
+
+    // Process the results
+    snapshot.forEach((doc) => {
+      const property = doc.data();
+      const micromarket = property.micromarket || "unassigned";
+
+      // Initialize arrays/counts if this is the first property for this micromarket
+      if (!countByMicromarket[micromarket]) {
+        countByMicromarket[micromarket] = 0;
+      }
+
+      // Increment the count for this micromarket
+      countByMicromarket[micromarket]++;
+    });
+
+    // Return either the full data or just the counts based on the parameter
+    return countByMicromarket;
+  } catch (error) {
+    console.error("Error fetching recent properties by micromarket:", error);
+    throw error;
+  }
+}
+
+const preferedMicromarket = async () => {
+  // Get the mapping of micromarkets to cpIds
+  const micromarketToCpIdMap = await getMicromarketToCpIdMapping();
+
+  // Get properties added in the last 24 hours grouped by micromarket
+  const recentPropertiesByMicromarket = await getLast24HoursProperties();
+
+  console.log(
+    micromarketToCpIdMap,
+    "Micromarket -> []\n",
+    recentPropertiesByMicromarket,
+    "Micromarket -> count"
+  );
+
+  for (const micromarket in recentPropertiesByMicromarket) {
+    // Get the properties for this micromarket
+    const properties = recentPropertiesByMicromarket[micromarket];
+
+    // Get the count of properties in this micromarket
+    const propertyCount = properties;
+
+    // Get the agents associated with this micromarket (if any)
+    const associatedAgents = micromarketToCpIdMap[micromarket] || [];
+
+    // console.log(associatedAgents, "HOLA AMIGO");
+
+    // Log the micromarket, agent IDs, and property count
+
+    // console.log(`Micromarket: ${micromarket}`);
+    // console.log(`- Properties in last 24 hours: ${propertyCount}`);
+    // console.log(`- Associated agents (${associatedAgents.length}): ${associatedAgents.join(', ') || 'None'}`);
+    // console.log('-----------------------------------');
+    for (const agentId in associatedAgents) {
+      const agentsRef = db.collection("agents");
+
+      // Query for agents with micromarket field
+      // Note: Firestore doesn't have a direct $exists operator like MongoDB
+      // We can query for non-null values though
+      const snapshot = await agentsRef
+        .where("cpId", "==", associatedAgents[agentId])
+        .select("name")
+        .get();
+
+      const doc = snapshot.docs[0].data();
+      console.log(doc);
+
+      if (propertyCount === 1) {
+        sendNotificationToAgent(
+          associatedAgents[agentId],
+          `${propertyCount} new Property in ${micromarket}`,
+          `Hey ${doc.name}, ${propertyCount} new property was added in ${micromarket} in the last 24 hours! Check them out now!`,
+          { additionalData: "optional-value", type: "property_notification" }
+        );
+      } else {
+        sendNotificationToAgent(
+          associatedAgents[agentId],
+          `${propertyCount} new Properties in ${micromarket}`,
+          `Hey ${doc.name}, ${propertyCount} new properties were added in ${micromarket} in the last 24 hours! Check them out now!`,
+          { additionalData: "optional-value", type: "property_notification" }
+        );
+      }
+    }
+  }
+
+  // Also check if there are any micromarkets with agents but no recent properties
+  console.log("\nMicromarkets with agents but no recent properties:");
+  for (const micromarket in micromarketToCpIdMap) {
+    if (!recentPropertiesByMicromarket[micromarket]) {
+      const agents = micromarketToCpIdMap[micromarket];
+      console.log(
+        `- ${micromarket}: ${agents.length} agents (${agents.join(", ")})`
+      );
+    }
+  }
+};
+const task = () => {
+  console.log("I run today");
+  deListNotification();
+};
+
+cron.schedule('0 8 * * *', task); // Runs every minute
+cron.schedule('0 10 * * *', preferedMicromarket)
