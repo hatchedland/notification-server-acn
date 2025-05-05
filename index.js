@@ -5,10 +5,7 @@ require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-const allowedOrigin =
-  process.env.ALLOWED_ORIGIN ||
-  "https://acnonline.in";
-
+const allowedOrigin = process.env.ALLOWED_ORIGIN || "https://acnonline.in";
 
 // Initialize Firebase - check for environment variables first, then fallback to json file
 let firebaseConfig;
@@ -23,11 +20,6 @@ if (
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
     }),
-  };
-} else {
-  const serviceAccountKey = require("./serviceAccountKey.json");
-  firebaseConfig = {
-    credential: admin.credential.cert(serviceAccountKey),
   };
 }
 
