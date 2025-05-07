@@ -244,6 +244,19 @@ app.post("/qcstatus/:id", async (req, res) => {
   }
 });
 
+async function inBoundEnquiries(cpId) {
+  try {
+    const agentDocRef = db.collection("agents").doc(cpId);
+    const agentDoc = await agentDocRef.get();
+    const agentData = agentDoc.data();
+    const inBound = agentData.inboundEnqCredits;
+    await agentDocRef.update({ inboundEnqCredits: inBound - 1 });
+    res.status(200).send("Successfull Deducted");
+  } catch {
+    res.status(500).send("Problem Deducting enquiries");
+  }
+}
+
 app.post("/enquiries/:id", async (req, res) => {
   const enquiryId = req.params.id;
   shouldLog("debug") && console.log(`Processing enquiry ID: ${enquiryId}`);
@@ -302,6 +315,12 @@ app.post("/enquiries/:id", async (req, res) => {
     }
 
     let results2 = { success: false, message: "Seller agent not found" };
+
+    try {
+      inBoundEnquiries(sellerAgentCpId);
+    } catch {
+      res.status(500).send("Error deducting in Bound Enquiries");
+    }
 
     if (sellerAgentCpId && propertyName) {
       results2 = await sendNotificationToAgent(
@@ -642,5 +661,5 @@ const task = () => {
   deListNotification();
 };
 
-cron.schedule('0 8 * * *', task); // Runs every minute
-cron.schedule('0 10 * * *', preferedMicromarket)
+cron.schedule("0 8 * * *", task); // Runs every minute
+cron.schedule("0 10 * * *", preferedMicromarket);
