@@ -250,7 +250,6 @@ async function inBoundEnquiries(cpId) {
   const agentData = agentDoc.data();
   const inBound = agentData.inboundEnqCredits;
   await agentDocRef.update({ inboundEnqCredits: inBound - 1 });
-  res.status(200).send("Successfull Deducted");
 }
 
 app.post("/enquiries/:id", async (req, res) => {
