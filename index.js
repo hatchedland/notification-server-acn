@@ -313,9 +313,10 @@ app.post("/enquiries/:id", async (req, res) => {
 
     try {
       inBoundEnquiries(sellerAgentCpId);
-      res.status(200).send("Successfull deducted in Bound Enquiries");
+      // res.status(200).send("Successfull deducted in Bound Enquiries");
     } catch {
       res.status(500).send("Error deducting in Bound Enquiries");
+      return;
     }
 
     if (sellerAgentCpId && propertyName) {
