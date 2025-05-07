@@ -249,6 +249,35 @@ async function inBoundEnquiries(cpId) {
   const agentDoc = await agentDocRef.get();
   const agentData = agentDoc.data();
   const inBound = agentData.inboundEnqCredits;
+  const propertyQuerySnapshot = await db
+    .collection("ACN123")
+    .where("cpCode", "==", cpId)
+    .get();
+
+  const batch = admin.firestore().batch();
+  // console.log(batch);
+  if (inBound === 1) {
+    propertyQuerySnapshot.forEach((doc) => {
+      const docData = doc.data();
+      const currentStatus = docData.status;
+      const newStatus = "shelved";
+
+      // Only update if status is different
+      if (currentStatus !== newStatus) {
+        // Get document reference
+        const docRef = doc.ref;
+
+        // Add to batch
+        batch.update(docRef, {
+          status: newStatus,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    });
+    await batch.commit();
+    console.log(`Updated status for ${propertyQuerySnapshot.size} properties`);
+  }
+
   await agentDocRef.update({ inboundEnqCredits: inBound - 1 });
 }
 
@@ -313,7 +342,6 @@ app.post("/enquiries/:id", async (req, res) => {
 
     try {
       inBoundEnquiries(sellerAgentCpId);
-      // res.status(200).send("Successfull deducted in Bound Enquiries");
     } catch {
       res.status(500).send("Error deducting in Bound Enquiries");
       return;
