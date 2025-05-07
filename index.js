@@ -245,16 +245,12 @@ app.post("/qcstatus/:id", async (req, res) => {
 });
 
 async function inBoundEnquiries(cpId) {
-  try {
-    const agentDocRef = db.collection("agents").doc(cpId);
-    const agentDoc = await agentDocRef.get();
-    const agentData = agentDoc.data();
-    const inBound = agentData.inboundEnqCredits;
-    await agentDocRef.update({ inboundEnqCredits: inBound - 1 });
-    res.status(200).send("Successfull Deducted");
-  } catch {
-    res.status(500).send("Problem Deducting enquiries");
-  }
+  const agentDocRef = db.collection("agents").doc(cpId);
+  const agentDoc = await agentDocRef.get();
+  const agentData = agentDoc.data();
+  const inBound = agentData.inboundEnqCredits;
+  await agentDocRef.update({ inboundEnqCredits: inBound - 1 });
+  res.status(200).send("Successfull Deducted");
 }
 
 app.post("/enquiries/:id", async (req, res) => {
@@ -318,6 +314,7 @@ app.post("/enquiries/:id", async (req, res) => {
 
     try {
       inBoundEnquiries(sellerAgentCpId);
+      res.status(200).send("Successfull deducted in Bound Enquiries");
     } catch {
       res.status(500).send("Error deducting in Bound Enquiries");
     }
